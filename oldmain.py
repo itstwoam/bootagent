@@ -20,8 +20,6 @@ When a user asks a question or makes a request, make a function call plan. You c
 - Write or overwrite files
 
 All paths you provide should be relative to the working directory. You do not need to specify the working directory in your function calls as it is automatically injected for security reasons.
-
-If any arguments for function calls are desired by me they will be stated.  If none are stated then you may add them if required by the task, no need to ask for clarification.
 """
     model_name = 'gemini-2.0-flash-001'
 
@@ -52,7 +50,7 @@ If any arguments for function calls are desired by me they will be stated.  If n
     model = genai.GenerativeModel(model_name, system_instruction=system_prompt)
 
     # Generate content
-    model_response = model.generate_content(
+    response = model.generate_content(
         my_prompt,
         tools=[available_functions]
     )
@@ -61,7 +59,7 @@ If any arguments for function calls are desired by me they will be stated.  If n
         print(f"User prompt: {my_prompt}")
     
     # Look for function calls in the response parts
-    for part in model_response.parts:
+    for part in response.parts:
         if hasattr(part, 'function_call') and part.function_call.name:
             function_call = part.function_call
             # Convert the args to a dictionary for readable display
@@ -69,21 +67,21 @@ If any arguments for function calls are desired by me they will be stated.  If n
             #print(f'Calling function: {function_call.name}({args_dict})')
             call_func_response = call_function(function_call, verbose)
         
-            if 'function_response' in call_func_response["parts"][0] and 'response' in call_func_response["parts"][0]["function_response"]:
+            if hasattr(call_func_response.parts[0].function_response, 'response'):
                 if verbose:
-                    print(f"-> {call_func_response['parts'][0]['function_response']['response']}")
+                    print(f"-> {call_func_response.parts[0].function_response.response}")
             else:
                 raise Exception("Error: no function calls found when expected.") 
         else:
             try:
-                print(model_response.text)
+                print(response.text)
             except ValueError:
                 print("Could not extract text from response")
 
 
-    if verbose and hasattr(model_response, 'usage_metadata'):
-        print(f"Prompt tokens: {model_response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {model_response.usage_metadata.candidates_token_count}")
+    if verbose and hasattr(response, 'usage_metadata'):
+        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
+        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
 
 if __name__ == "__main__":
     main()
