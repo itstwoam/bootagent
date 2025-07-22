@@ -44,21 +44,34 @@ def main():
         return 1
 
     my_prompt = argv[1]
-    
+
     load_dotenv()
     api_key = os.environ.get("GEMINI_API_KEY")
-    
+
     # Configure the API
     genai.configure(api_key=api_key)
     
     # Create the model
     model = genai.GenerativeModel(model_name, system_instruction=system_prompt)
 
+    iterations = 1
+
     # Generate content
     model_response = gen_content(model,
             my_prompt,
             verbose
     )
+
+
+    while iterations < 20:
+        iterations += 1            
+
+        #Check response for function call.
+
+        #If not then set iterations to 21
+        if not model_response.function_calls:
+
+
 
 
 
@@ -100,6 +113,6 @@ def gen_content(model, content, verbose):
 
 
 
-
+#
 if __name__ == "__main__":
     main()
