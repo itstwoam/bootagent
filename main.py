@@ -1,104 +1,108 @@
 import os
-from sys import argv
+import sys
 from dotenv import load_dotenv
-import google.generativeai as genai
-from google.generativeai import types
-import functions.schemas as schemas
+from google import genai
+from google.genai import Client, types
+from functions.schemas import *
 from functions.call_function import call_function
-
-available_functions = types.Tool(
-        function_declarations=[
-        schemas.schema_get_files_info,
-        schemas.schema_get_file_content,
-        schemas.schema_run_python_file,
-        schemas.schema_write_file
-        ]
-)
 
 system_prompt = """
 You are a helpful AI coding agent.
 
-When a user asks a question or makes a request, make a function call plan. You can perform the following operations:
+When a user asks a question or makes a request, make a function call plan.  You can perform the following operations:
+    - List files and directories
+    - Read file contents
+    - Execute Python files with optional arguments
+    - Write or overwrite files
 
-- List files and directories
-- Read file contents
-- Execute Python files with optional arguments
-- Write or overwrite files
+All paths you provide should be relative to the working directory.  You do not need to specify the working directory in your function calls as it is automatically injected for security reasons. If not directly told what parameters to use then you may use or create any arguments you feel are required to complete the task as instructed, no need to ask for clarification.
 
-All paths you provide should be relative to the working directory. You do not need to specify the working directory in your function calls as it is automatically injected for security reasons.
-
-If any arguments for function calls are desired by me they will be stated.  If none are stated then you may add them if required by the task, no need to ask for clarification.
+Unless otherwise stated any questions asked will be related to the calculator app main.py in the root directory.
+Please use lists with short to medium line lengths when describing prcoesses when possible.
 """
 
-model_name = 'gemini-2.0-flash-001'
+available_functions = types.Tool(
+        function_declarations=[
+            schema_get_files_info,
+            schema_get_file_content,
+            schema_run_python_file,
+            schema_write_file
+            ]
+        )
 
 def main():
-    args = argv[1:]
-    verbose = len(args) > 1 and args[1] == "--verbose"
-    
-    
-    if not args:
-        print("AI code assistant")
-        print('\nUsage: python main.py "your prompt here"')
-        print('Example: python main.py "How do I profit?"')
-        return 1
-
-    my_prompt = argv[1]
-    
     load_dotenv()
     api_key = os.environ.get("GEMINI_API_KEY")
-    
-    # Configure the API
-    genai.configure(api_key=api_key)
-    
-    # Create the model
-    model = genai.GenerativeModel(model_name, system_instruction=system_prompt)
 
-    # Generate content
-    model_response = gen_content(model,
-            my_prompt,
-            verbose
-    )
+    client = genai.Client(api_key=api_key)
 
+    model_name = "gemini-2.0-flash-001"
 
+    if len(sys.argv) < 2 or sys.argv[1] == "--verbose":
+        print("Error: No prompt given.")
+        sys.exit(1)
 
-def gen_content(model, content, verbose):
-    model_response = model.generate_content(
-        content,
-        tools=[available_functions]
-    )
+    verbose = False
+    if len(sys.argv) == 3 and sys.argv[2] == "--verbose":
+        verbose = True
+
+    my_config = types.GenerateContentConfig(tools= [available_functions], system_instruction=system_prompt)
+
+    my_prompt = sys.argv[1]
 
     if verbose:
-        print(f"User prompt: {content}")
+        print(f'User prompt: {my_prompt}')
+
+    messages = [
+        types.Content(role="user", parts=[types.Part(text=my_prompt)])
+        ]
     
-    # Look for function calls in the response parts
-    for part in model_response.parts:
-        if hasattr(part, 'function_call') and part.function_call.name:
-            function_call = part.function_call
-            # Convert the args to a dictionary for readable display
-            args_dict = dict(function_call.args)
-            #print(f'Calling function: {function_call.name}({args_dict})')
-            call_func_response = call_function(function_call, verbose)
+    MAX_LOOP = 20
+    iterations = 0
+
+    while iterations < MAX_LOOP:
+        iterations += 1
+
+        try:
+            final_response = generate_content(client, model_name, messages, my_config, verbose)
+            if final_response:
+                print("Final response: "+final_response)
+                return 0
+        except Exception as e:
+            print(f"Exception in generate_content: {e}")
+
+    print(f"Maximum iterations({MAX_LOOP}) reached, aborting.")
         
-            if 'function_response' in call_func_response["parts"][0] and 'response' in call_func_response["parts"][0]["function_response"]:
-                if verbose:
-                    print(f"-> {call_func_response['parts'][0]['function_response']['response']}")
-            else:
-                raise Exception("Error: no function calls found when expected.") 
-        else:
-            try:
-                print(model_response.text)
-            except ValueError:
-                print("Could not extract text from response")
+def generate_content(client, model, contents, config, verbose):    
+    model_response = client.models.generate_content(
+        model= model,
+        contents=contents,
+        config=config
+        )
 
+    if verbose:
+        print(f'Promt tokens: {model_response.usage_metadata.prompt_token_count}')
+        print(f'Response tokens: {model_response.usage_metadata.candidates_token_count}')
 
-    if verbose and hasattr(model_response, 'usage_metadata'):
-        print(f"Prompt tokens: {model_response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {model_response.usage_metadata.candidates_token_count}")
+    for candidate in model_response.candidates:
+        if candidate.content:
+            contents.append(candidate.content)
+    if not model_response.function_calls:
+        return model_response.text
 
+    function_responses = []
+    if model_response.function_calls:
+        for call in model_response.function_calls:
+            call_response = call_function(call, verbose)
+            if not call_response.parts[0].function_response.response:
+                raise exception("Error no response in function response.")
 
+            if verbose:
+                print(f"-> {call_response.parts[0].function_response.response}")
 
-
+            
+            function_responses.append(call_response.parts[0])
+        contents.append(types.Content(role="tool", parts=function_responses))
 
 
 if __name__ == "__main__":
